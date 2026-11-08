@@ -362,16 +362,19 @@ function escapeHtml(s) {
 
 // Undoes JSON escapes that swallowed a TeX command's backslash, e.g. "\frac"
 // parsed as a form feed + "rac" when a server couldn't enforce valid JSON.
-function repairTex(tex) {
-  return tex
+// Runs on the whole Markdown before parsing: the control characters would
+// otherwise read as whitespace or line breaks and hide the math delimiters.
+// A tab in leading indentation is left alone.
+function repairTex(md) {
+  return md
     .replace(/\f/g, '\\f')
     .replace(/\x08/g, '\\b')
-    .replace(/\t(?=[a-zA-Z])/g, '\\t')
+    .replace(/(?<!^[ \t]*)\t(?=[a-zA-Z])/gm, '\\t')
     .replace(/\r(?=[a-zA-Z])/g, '\\r');
 }
 
 function mathHtml(tex, display) {
-  const clean = repairTex(tex.trim());
+  const clean = tex.trim();
   const fallback = display ? `$$${clean}$$` : `$${clean}$`; // readable if KaTeX can't load
   return `<span class="math${display ? ' math-display' : ''}" data-tex="${escapeHtml(clean)}">${escapeHtml(fallback)}</span>`;
 }
@@ -391,6 +394,7 @@ function inline(s) {
     // one, so prices like "$5 and $10" stay text.
     .replace(/(^|[^\\$])\$(?=\S)([^$\n]*?\S)\$(?![\d$])/g, (_, pre, tex) => pre + keep(mathHtml(tex, false)));
   out = escapeHtml(out)
+    .replace(/\*\*\*(?!\s)(.+?)(?<!\s)\*\*\*/g, '<strong><em>$1</em></strong>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/__(.+?)__/g, '<strong>$1</strong>')
     .replace(/(^|[^*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\*)/g, '$1<em>$2</em>')
@@ -399,10 +403,11 @@ function inline(s) {
 }
 
 export function renderMarkdown(md) {
-  const lines = md.replace(/\r\n?/g, '\n').split('\n');
+  const lines = repairTex(md).replace(/\r\n?/g, '\n').split('\n');
   const lists = []; // stack of { type, indent }
   let html = '';
   let para = [];
+  let quote = []; // lines of the current blockquote, joined into one
   let item = null; // text lines of the current list item, rendered together so math can wrap lines
   let mathBlock = null; // { close, lines, indent } while inside a multi-line $$ … $$ block
 
@@ -413,7 +418,9 @@ export function renderMarkdown(md) {
   const flushPara = () => {
     flushItem();
     if (para.length) html += `<p>${inline(para.join(' '))}</p>`;
+    if (quote.length) html += `<blockquote>${inline(quote.join(' '))}</blockquote>`;
     para = [];
+    quote = [];
   };
   const closeLists = (indent = -1) => {
     flushItem();
@@ -467,8 +474,8 @@ export function renderMarkdown(md) {
       }
       item = [m[2]];
     } else if (trimmed.startsWith('>')) {
-      flushPara(); closeLists();
-      html += `<blockquote>${inline(trimmed.replace(/^>\s?/, ''))}</blockquote>`;
+      if (!quote.length) { flushPara(); closeLists(); }
+      quote.push(trimmed.replace(/^>\s?/, ''));
     } else if (lists.length && indent > 0) {
       // Continuation of a list item; after a blank line it starts a new line within the item.
       if (!item) {
@@ -476,6 +483,8 @@ export function renderMarkdown(md) {
         html += '<br>';
       }
       item.push(trimmed);
+    } else if (quote.length) {
+      quote.push(trimmed); // lazy continuation of the blockquote
     } else {
       closeLists();
       para.push(trimmed);

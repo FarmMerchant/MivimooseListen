@@ -18,6 +18,7 @@ function cleanText(s) {
   return s
     .replace(/<[^>]+>/g, '') // VTT voice/styling tags
     .replace(/\{\\[^}]*\}/g, '') // SRT positioning like {\an8}
+    .replace(/&(amp|lt|gt|quot|apos|nbsp|#39);/g, (_, e) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" })[e]) // VTT escapes
     .replace(/\s+/g, ' ')
     .trim();
 }
